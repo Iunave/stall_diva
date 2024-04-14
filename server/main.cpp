@@ -10,13 +10,10 @@
 #include <cstring>
 #include <string>
 #include <array>
-
-#ifndef NDEBUG
 #include <fmt/format.h>
-#define LOG(message, ...) fmt::print(message "\n" __VA_OPT__(,) __VA_ARGS__)
-#else
-#define LOG(...) void()
-#endif
+#include <map>
+
+#define LOG(message, ...) fmt::print("{}: " message "\n", timestamp_formatted() __VA_OPT__(,) __VA_ARGS__)
 
 constexpr uint8_t END_OF_TRANSMISSION_BLOCK = 23;
 
@@ -28,15 +25,77 @@ struct client_t
     bool logged_in = false;
 };
 
+struct handler_key_t
+{
+    uint64_t day : 62;
+    enum{
+        pasture = 0b00,
+        stable_in = 0b01,
+        stable_out = 0b10
+    } id : 2;
+
+    constexpr friend auto operator<=>(const handler_key_t& lhs, const handler_key_t& rhs){
+        return std::bit_cast<uint64_t>(lhs) <=> std::bit_cast<uint64_t>(rhs);
+    }
+
+    std::string to_string() const
+    {
+        std::string day_name;
+        switch(day)
+        {
+            case 0: day_name = "monday"; break;
+            case 1: day_name = "tuesday"; break;
+            case 2: day_name = "wednesday"; break;
+            case 3: day_name = "thursday"; break;
+            case 4: day_name = "friday"; break;
+            case 5: day_name = "saturday"; break;
+            case 6: day_name = "sunday"; break;
+            default: day_name = fmt::format("invalid ({})", day); break;
+        }
+
+        std::string id_name;
+        switch(id)
+        {
+            case pasture: id_name = "pasture"; break;
+            case stable_in: id_name = "stable-in"; break;
+            case stable_out: id_name = "stable-out"; break;
+            default: id_name = fmt::format("invalid ({})", id); break;
+        }
+
+        return fmt::format("{} {}", day_name, id_name);
+    }
+};
+
+template<>
+struct std::hash<handler_key_t>
+{
+    constexpr size_t operator()(const handler_key_t& in)
+    {
+        return std::bit_cast<size_t>(in);
+    }
+};
+
+sig_atomic_t shutdown_server = 0;
+int server_socket = 0;
+
+std::vector<client_t> clients{};
+pthread_rwlock_t clients_lock{};
+
+std::map<handler_key_t, std::u16string> handlers{};
+pthread_rwlock_t handlers_lock{};
+
 enum class client_message_type_e : uint8_t
 {
     login = 0,
+    get_handler,
+    set_handler,
     max
 };
 
 enum class server_message_type_e : uint8_t
 {
     login_response = 0,
+    sent_handler_name,
     max
 };
 
@@ -57,28 +116,34 @@ struct server_message_t
     }
 };
 
-struct queued_message_t
-{
-    client_t sender{};
-    std::vector<uint8_t> data{};
-};
-
-sig_atomic_t shutdown_server = 0;
-int server_socket = 0;
-std::vector<client_t> clients{};
-pthread_rwlock_t clients_lock{};
-std::vector<queued_message_t> messages{};
-pthread_mutex_t messages_mutex{};
-pthread_cond_t messages_condition{};
-pthread_t message_consumer_thread{};
-pthread_attr_t detached_thread_attr{};
-
-#ifndef NDEBUG
 std::string address2string(sockaddr_in address)
 {
     return fmt::format("{}:{}", inet_ntoa(address.sin_addr), address.sin_port);
 }
-#endif
+
+std::string timestamp_formatted()
+{
+    time_t now;
+    time(&now);
+
+    char buffer[100];
+    size_t size = strftime(buffer, sizeof(buffer), "%a %Y-%m-%d %H:%M:%S %Z", localtime(&now));
+
+    return std::string{buffer, size};
+}
+
+std::string cvt_str16_to_str8(std::u16string_view str)
+{
+    std::string converted{};
+    converted.resize(str.size());
+
+    for(uint64_t index = 0; index < str.size(); ++index)
+    {
+        converted[index] = str[index] > 128 ? '?' : static_cast<char>(str[index]);
+    }
+
+    return converted;
+}
 
 void sigterm_handler(int, siginfo_t*, void*)
 {
@@ -96,14 +161,6 @@ void close_server_socket()
     {
         perror("close");
     }
-}
-
-void cleanup_pthread_resources() //fixme cant call this as we are "leaking" detached threads
-{
-    pthread_rwlock_destroy(&clients_lock);
-    pthread_mutex_destroy(&messages_mutex);
-    pthread_cond_destroy(&messages_condition);
-    pthread_attr_destroy(&detached_thread_attr);
 }
 
 void disconnect_clients()
@@ -140,7 +197,7 @@ ssize_t read_transmission_block(int socket, std::vector<uint8_t>& output)
     while(true)
     {
         uint8_t byte;
-        ssize_t nread = recv(socket, &byte, 1, 0); //todo optimize
+        ssize_t nread = recv(socket, &byte, 1, 0);
         total_nread += nread;
 
         if(nread <= 0)
@@ -194,16 +251,107 @@ bool mutate_client(pthread_t listener, C mutator)
     return false;
 }
 
-void* client_listener(void*)
+void on_invalid_message(const std::vector<uint8_t>& message, client_t sender)
 {
-    client_t client;
-    if(!find_client(pthread_self(), &client))
+    LOG("recieved invalid message {}. from: {}", message[0], address2string(sender.address));
+}
+
+void on_login_request(const std::vector<uint8_t>& message, client_t sender)
+{
+    constexpr char password[] = "washington";
+    auto entered_password = reinterpret_cast<const char*>(&message[1]);
+
+    server_message_t response{server_message_type_e::login_response, 1};
+    *response.data() = (std::strcmp(password, entered_password) == 0);
+
+    LOG("login request: {} : {}", address2string(sender.address), *response.data() ? "success" : "failure");
+
+    auto set_login_status = [accepted = *response.data()](client_t* client){
+        client->logged_in = accepted;
+    };
+
+    if(mutate_client(sender.listener, set_login_status))
     {
-        pthread_exit(nullptr);
+        //we dont care if the client disconnects here, its handled in the listener
+        (void)send(sender.socket, response.message_buffer.data(), response.message_buffer.size(), MSG_NOSIGNAL);
+    }
+}
+
+void on_get_handler_request(const std::vector<uint8_t>& message, client_t sender)
+{
+    if(message.size() != 9)
+    {
+        on_invalid_message(message, sender);
+        return;
     }
 
+    auto key = *reinterpret_cast<const handler_key_t*>(&message[1]);
+
+    LOG("{} requested handler {}", address2string(sender.address), key.to_string());
+
+    pthread_rwlock_wrlock(&handlers_lock);
+    std::u16string handler_name = handlers[key];
+    pthread_rwlock_unlock(&handlers_lock);
+
+    const uint64_t handler_name_bytes = ((handler_name.size() + 1) * 2);
+
+    server_message_t response{server_message_type_e::sent_handler_name, sizeof(handler_key_t) + handler_name_bytes};
+    std::memcpy(response.data(), &key, sizeof(handler_key_t));
+    std::memcpy(response.data() + sizeof(handler_key_t), handler_name.data(), handler_name_bytes);
+
+    (void)send(sender.socket, response.message_buffer.data(), response.message_buffer.size(), MSG_NOSIGNAL);
+}
+
+void on_set_handler_request(const std::vector<uint8_t>& message, client_t sender)
+{
+    if(message.size() <= 9)
+    {
+        on_invalid_message(message, sender);
+        return;
+    }
+
+    if(!sender.logged_in)
+    {
+        LOG("{} tried to set a handler name but is not logged in", address2string(sender.address));
+        return;
+    }
+
+    auto key = *reinterpret_cast<const handler_key_t*>(&message[1]);
+    std::u16string handler_name{reinterpret_cast<const char16_t*>(&message[9]), ((message.size() - 9) / 2) - 1};
+
+    LOG("{}: set handler {} to {}", address2string(sender.address), key.to_string(), cvt_str16_to_str8(handler_name));
+
+    pthread_rwlock_wrlock(&handlers_lock);
+    handlers[key] = handler_name;
+    pthread_rwlock_unlock(&handlers_lock);
+
+    const uint64_t handler_name_bytes = ((handler_name.size() + 1) * 2);
+
+    server_message_t broadcast_message{server_message_type_e::sent_handler_name, sizeof(handler_key_t) + handler_name_bytes};
+    std::memcpy(broadcast_message.data(), &key, sizeof(handler_key_t));
+    std::memcpy(broadcast_message.data() + sizeof(handler_key_t), handler_name.data(), handler_name_bytes);
+
+    pthread_rwlock_rdlock(&clients_lock);
+    for(const client_t& client : clients)
+    {
+        if(client.listener != sender.listener)
+        {
+            (void)send(client.socket, broadcast_message.message_buffer.data(), broadcast_message.message_buffer.size(), MSG_NOSIGNAL);
+        }
+    }
+    pthread_rwlock_unlock(&clients_lock);
+}
+
+void* client_listener(void*)
+{
     while(true)
     {
+        client_t client;
+        if(!find_client(pthread_self(), &client))
+        {
+            pthread_exit(nullptr);
+        }
+
         std::vector<uint8_t> message_buffer{};
         ssize_t nread = read_transmission_block(client.socket, message_buffer);
 
@@ -234,96 +382,23 @@ void* client_listener(void*)
         }
         else
         {
-            find_client(pthread_self(), &client); //update our client
-
-            pthread_mutex_lock(&messages_mutex);
-
-            auto& queued_message = messages.emplace_back();
-            queued_message.sender = client;
-            queued_message.data = std::move(message_buffer);
-
-            pthread_cond_signal(&messages_condition);
-            pthread_mutex_unlock(&messages_mutex);
-        }
-    }
-}
-
-void on_login_request(const queued_message_t& message)
-{
-    constexpr char password[] = "washington";
-    auto entered_password = reinterpret_cast<const char*>(&message.data[1]);
-
-    server_message_t response{server_message_type_e::login_response, 1};
-    *response.data() = (std::strcmp(password, entered_password) == 0);
-
-    LOG("login request: {} : {}", address2string(message.sender.address), *response.data() ? "success" : "failure");
-
-    auto set_login_status = [accepted = *response.data()](client_t* client){
-        client->logged_in = accepted;
-    };
-
-    if(mutate_client(message.sender.listener, set_login_status))
-    {
-        //we dont care if the client disconnects here, its handled in the listener
-        (void)send(message.sender.socket, response.message_buffer.data(), response.message_buffer.size(), MSG_NOSIGNAL);
-    }
-}
-
-void on_invalid_message(const queued_message_t& message)
-{
-    LOG("recieved invalid message {}. from: {}", message.data[0], address2string(message.sender.address));
-}
-
-void* message_consumer(void*)
-{
-    while(shutdown_server == 0)
-    {
-        static decltype(messages) messages_copy{};
-
-        pthread_mutex_lock(&messages_mutex);
-        while(messages.empty())
-        {
-            pthread_cond_wait(&messages_condition, &messages_mutex);
-        }
-
-        std::swap(messages, messages_copy);
-        pthread_mutex_unlock(&messages_mutex);
-
-        for(uint64_t index = 0; index < messages_copy.size(); ++index)
-        {
-            auto message_handler = [](void* data) -> void*
+            switch(reinterpret_cast<client_message_type_e&>(message_buffer[0]))
             {
-                auto message = reinterpret_cast<const queued_message_t*>(data);
-
-                switch(*reinterpret_cast<const client_message_type_e*>(&message->data[0]))
-                {
-                    case client_message_type_e::login:
-                        on_login_request(*message);
-                        break;
-                    default:
-                        on_invalid_message(*message);
-                        break;
-                }
-
-                delete message;
-                pthread_exit(nullptr);
-            };
-
-            auto new_message = new queued_message_t{std::move(messages_copy[index])};
-            pthread_t detach_thread;
-            int err = pthread_create(&detach_thread, &detached_thread_attr, message_handler, new_message);
-            if(err != 0)
-            {
-                LOG("error creating message handler thread. err: {}", strerror(err));
-                delete new_message;
-                pthread_exit(nullptr);
+                case client_message_type_e::login:
+                    on_login_request(message_buffer, client);
+                    break;
+                case client_message_type_e::get_handler:
+                    on_get_handler_request(message_buffer, client);
+                    break;
+                case client_message_type_e::set_handler:
+                    on_set_handler_request(message_buffer, client);
+                    break;
+                default:
+                    on_invalid_message(message_buffer, client);
+                    break;
             }
         }
-
-        messages_copy.clear();
     }
-
-    pthread_exit(nullptr);
 }
 
 int main(int argc, char** argv)
@@ -381,17 +456,14 @@ int main(int argc, char** argv)
         return EXIT_FAILURE;
     }
 
+    LOG("socket initialized and listening");
+
     pthread_rwlock_init(&clients_lock, nullptr);
-    pthread_mutex_init(&messages_mutex, nullptr);
-    pthread_cond_init(&messages_condition, nullptr);
+    pthread_rwlock_init(&handlers_lock, nullptr);
+
+    pthread_attr_t detached_thread_attr{};
     pthread_attr_init(&detached_thread_attr);
     pthread_attr_setdetachstate(&detached_thread_attr, PTHREAD_CREATE_DETACHED);
-
-    int consumer_thread_error = pthread_create(&message_consumer_thread, &detached_thread_attr, &message_consumer, nullptr);
-    if(consumer_thread_error != 0)
-    {
-        return EXIT_FAILURE;
-    }
 
     if(atexit(&disconnect_clients) != 0)
     {
@@ -401,7 +473,7 @@ int main(int argc, char** argv)
 
     while(shutdown_server == 0) //accept clients
     {
-        sockaddr_in client_addr;
+        sockaddr_in client_addr{};
         socklen_t client_addr_len = sizeof(client_addr);
         int client_socket = accept(server_socket, reinterpret_cast<sockaddr*>(&client_addr), &client_addr_len);
 
@@ -426,6 +498,7 @@ int main(int argc, char** argv)
 
         if(listener_thread_error != 0)
         {
+            LOG("error creating listener thread {}", strerror(listener_thread_error));
             return EXIT_FAILURE;
         }
     }
