@@ -53,7 +53,12 @@ class _EditableDayHandlerState extends State<EditableDayHandler> with SendNetwor
 
       final messageView = ByteData.view(messageData.buffer);
       if (messageType == ServerMessageType.sentHandlerName.index && messageView.getUint64(0, Endian.little) == widget.dayKey) {
-        final newHandler = String.fromCharCodes(messageData, 8);
+        var stringBuilder = StringBuffer();
+        for(var index = 8; index < messageView.lengthInBytes - 2; index += 2){
+          stringBuilder.writeCharCode(messageView.getUint16(index, Endian.little));
+        }
+
+        final newHandler = stringBuilder.toString();
         if(textController.text != newHandler){
           setState(() {
             textController.value = TextEditingValue(
