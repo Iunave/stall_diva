@@ -12,6 +12,7 @@
 #include <array>
 #include <fmt/format.h>
 #include <map>
+#include <functional>
 
 #define LOG(message, ...) fmt::print("{}: " message "\n", timestamp_formatted() __VA_OPT__(,) __VA_ARGS__)
 
@@ -272,7 +273,6 @@ void on_login_request(const std::vector<uint8_t>& message, client_t sender)
 
     if(mutate_client(sender.listener, set_login_status))
     {
-        //we dont care if the client disconnects here, its handled in the listener
         (void)send(sender.socket, response.message_buffer.data(), response.message_buffer.size(), MSG_NOSIGNAL);
     }
 }

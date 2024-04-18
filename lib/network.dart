@@ -44,13 +44,14 @@ class ServerCommunicator extends InheritedWidget {
 }
 
 class PersistentServerCommunicator {
-  final Future<Socket> server;
+  late Future<Socket> server;
   late ServerStream stream;
 
-  PersistentServerCommunicator(this.server) {
+  PersistentServerCommunicator(String host) {
+    server = Socket.connect(host, 4040);
     stream = startStream()
-    .map((event) => (event.first, event.sublist(1)))
-    .asBroadcastStream();
+        .map((event) => (event.first, event.sublist(1)))
+        .asBroadcastStream();
   }
 
   Stream<Uint8List> startStream() async* {

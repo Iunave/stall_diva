@@ -20,7 +20,7 @@ const weekdays = [
 ];
 
 int weekNumber(){
-  return Jiffy.now().dayOfYear ~/ 7;
+  return (Jiffy.now().dayOfYear ~/ 7) + 1;
 }
 
 class EditableDayHandler extends StatefulWidget {
@@ -47,9 +47,7 @@ class _EditableDayHandlerState extends State<EditableDayHandler> with SendNetwor
   void listenForServerHandlerName() async {
     final serverCommunicator = ServerCommunicator.of(context);
     await for(final (messageType, messageData) in serverCommunicator.messageStream){
-      if(!mounted){
-        break;
-      }
+      if(!mounted) break;
 
       final messageView = ByteData.view(messageData.buffer);
       if (messageType == ServerMessageType.sentHandlerName.index && messageView.getUint64(0, Endian.little) == widget.dayKey) {

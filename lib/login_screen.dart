@@ -14,9 +14,11 @@ class _LoginHandlerState extends State<LoginHandler> with SendNetworkMessageHelp
   String loginResult = '';
 
   void attemptLogin() {
-    setState(() {
-      loginResult = 'kontaktar server';
-    });
+    if(loginResult != 'kontaktar server'){
+      setState(() {
+        loginResult = 'kontaktar server';
+      });
+    }
 
     enteredPassword = enteredPassword.trim();
     var message = ClientMessage(ClientMessageType.login, enteredPassword.length + 1);
@@ -31,6 +33,8 @@ class _LoginHandlerState extends State<LoginHandler> with SendNetworkMessageHelp
   void listenForLoginResponse() async {
     final serverCommunicator = ServerCommunicator.of(context);
     await for(final (messageType, messageData) in serverCommunicator.messageStream){
+      if(!mounted) break;
+
       if (messageType == ServerMessageType.loginResponse.index) {
         final messageView = ByteData.view(messageData.buffer);
         final loginSuccess = messageView.getUint8(0) == 1;

@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 
 import 'network.dart';
@@ -6,7 +5,7 @@ import 'login_screen.dart';
 import 'home_screen.dart';
 
 void main() {
-  var serverCommunicator = PersistentServerCommunicator(Socket.connect('81.228.254.204', 4040));
+  var serverCommunicator = PersistentServerCommunicator('stall-diva.se');
 
   runApp(
       MaterialApp(
