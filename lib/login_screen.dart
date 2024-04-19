@@ -32,12 +32,13 @@ class _LoginHandlerState extends State<LoginHandler> with SendNetworkMessageHelp
 
   void listenForLoginResponse() async {
     final serverCommunicator = ServerCommunicator.of(context);
-    await for(final (messageType, messageData) in serverCommunicator.messageStream){
+    await for(final Uint8List message in serverCommunicator.messageStream){
       if(!mounted) break;
 
-      if (messageType == ServerMessageType.loginResponse.index) {
-        final messageView = ByteData.view(messageData.buffer);
-        final loginSuccess = messageView.getUint8(0) == 1;
+      final messageView = ByteData.view(message.buffer);
+
+      if (messageView.getUint32(0, Endian.little) == ServerMessageType.loginResponse.index) {
+        bool loginSuccess = messageView.getUint8(8) == 1;
 
         if(loginSuccess){
           Navigator.popAndPushNamed(context, '/home');

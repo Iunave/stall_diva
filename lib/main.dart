@@ -5,7 +5,7 @@ import 'login_screen.dart';
 import 'home_screen.dart';
 
 void main() {
-  var serverCommunicator = PersistentServerCommunicator('stall-diva.se');
+  var communicatorService = PersistentServerCommunicator('stall-diva.se');
 
   runApp(
       MaterialApp(
@@ -22,14 +22,14 @@ void main() {
           routes: {
             '/': (_) {
               return ServerCommunicator(
-                  communicatorService: serverCommunicator,
-                  child: const LoginScreen()
+                  communicatorService: communicatorService,
+                  child: const LoginScreen(),
               );
             },
             '/home': (_) {
               return ServerCommunicator(
-                  communicatorService: serverCommunicator,
-                  child: const HomeScreen()
+                  communicatorService: communicatorService,
+                  child: const HomeScreen(),
               );
             },
           }

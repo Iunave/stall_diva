@@ -41,29 +41,7 @@ struct handler_key_t
 
     std::string to_string() const
     {
-        std::string day_name;
-        switch(day)
-        {
-            case 0: day_name = "monday"; break;
-            case 1: day_name = "tuesday"; break;
-            case 2: day_name = "wednesday"; break;
-            case 3: day_name = "thursday"; break;
-            case 4: day_name = "friday"; break;
-            case 5: day_name = "saturday"; break;
-            case 6: day_name = "sunday"; break;
-            default: day_name = fmt::format("invalid ({})", day); break;
-        }
-
-        std::string id_name;
-        switch(id)
-        {
-            case pasture: id_name = "pasture"; break;
-            case stable_in: id_name = "stable-in"; break;
-            case stable_out: id_name = "stable-out"; break;
-            default: id_name = fmt::format("invalid ({})", id); break;
-        }
-
-        return fmt::format("{} {}", day_name, id_name);
+        return fmt::format("{}.{}", day, id);
     }
 };
 
@@ -85,7 +63,7 @@ pthread_rwlock_t clients_lock{};
 std::map<handler_key_t, std::u16string> handlers{};
 pthread_rwlock_t handlers_lock{};
 
-enum class client_message_type_e : uint8_t
+enum class client_message_type_e : uint32_t
 {
     login = 0,
     get_handler,
@@ -93,7 +71,7 @@ enum class client_message_type_e : uint8_t
     max
 };
 
-enum class server_message_type_e : uint8_t
+enum class server_message_type_e : uint32_t
 {
     login_response = 0,
     sent_handler_name,
@@ -104,16 +82,16 @@ struct server_message_t
 {
     std::vector<uint8_t> message_buffer{};
 
-    server_message_t(server_message_type_e message_type, uint64_t data_size)
+    server_message_t(server_message_type_e message_type, uint32_t data_size)
     {
-        message_buffer.resize(data_size + 2);
-        message_buffer[0] = static_cast<uint8_t>(message_type);
-        message_buffer.back() = END_OF_TRANSMISSION_BLOCK;
+        message_buffer.resize(8 + data_size);
+        reinterpret_cast<uint32_t&>(message_buffer[0]) = static_cast<uint32_t>(message_type);
+        reinterpret_cast<uint32_t&>(message_buffer[4]) = data_size;
     }
 
-    uint8_t* data()
+    uint8_t* message_data()
     {
-        return message_buffer.data() + 1;
+        return message_buffer.data() + 8;
     }
 };
 
@@ -191,27 +169,26 @@ void disconnect_clients()
     }
 }
 
-ssize_t read_transmission_block(int socket, std::vector<uint8_t>& output)
+ssize_t read_client_message(int socket, uint32_t* buffer_size, void* buffer)
 {
-    ssize_t total_nread = 0;
-
-    while(true)
+    if(buffer == nullptr)
     {
-        uint8_t byte;
-        ssize_t nread = recv(socket, &byte, 1, 0);
-        total_nread += nread;
+        struct{
+            uint32_t type;
+            uint32_t size;
+        } message_header{};
 
-        if(nread <= 0)
-        {
+        ssize_t nread = recv(socket, &message_header, sizeof(message_header), MSG_WAITALL | MSG_PEEK);
+        if(nread <= 0){
             return nread;
         }
 
-        if(byte == END_OF_TRANSMISSION_BLOCK)
-        {
-            return total_nread;
-        }
-
-        output.push_back(byte);
+        *buffer_size = sizeof(message_header) + message_header.size;
+        return 1;
+    }
+    else
+    {
+        return recv(socket, buffer, *buffer_size, MSG_WAITALL);
     }
 }
 
@@ -254,20 +231,20 @@ bool mutate_client(pthread_t listener, C mutator)
 
 void on_invalid_message(const std::vector<uint8_t>& message, client_t sender)
 {
-    LOG("recieved invalid message {}. from: {}", message[0], address2string(sender.address));
+    LOG("recieved invalid message {}. from: {}", reinterpret_cast<const uint32_t&>(message[0]), address2string(sender.address));
 }
 
 void on_login_request(const std::vector<uint8_t>& message, client_t sender)
 {
     constexpr char password[] = "washington";
-    auto entered_password = reinterpret_cast<const char*>(&message[1]);
+    auto entered_password = reinterpret_cast<const char*>(&message[8]);
 
     server_message_t response{server_message_type_e::login_response, 1};
-    *response.data() = (std::strcmp(password, entered_password) == 0);
+    *response.message_data() = (std::strcmp(password, entered_password) == 0);
 
-    LOG("login request: {} : {}", address2string(sender.address), *response.data() ? "success" : "failure");
+    LOG("login request: {} : {}", address2string(sender.address), *response.message_data() ? "success" : "failure");
 
-    auto set_login_status = [accepted = *response.data()](client_t* client){
+    auto set_login_status = [accepted = *response.message_data()](client_t* client){
         client->logged_in = accepted;
     };
 
@@ -279,13 +256,13 @@ void on_login_request(const std::vector<uint8_t>& message, client_t sender)
 
 void on_get_handler_request(const std::vector<uint8_t>& message, client_t sender)
 {
-    if(message.size() != 9)
+    if(message.size() != 16)
     {
         on_invalid_message(message, sender);
         return;
     }
 
-    auto key = *reinterpret_cast<const handler_key_t*>(&message[1]);
+    auto key = *reinterpret_cast<const handler_key_t*>(&message[8]);
 
     LOG("{} requested handler {}", address2string(sender.address), key.to_string());
 
@@ -295,16 +272,16 @@ void on_get_handler_request(const std::vector<uint8_t>& message, client_t sender
 
     const uint64_t handler_name_bytes = ((handler_name.size() + 1) * 2);
 
-    server_message_t response{server_message_type_e::sent_handler_name, sizeof(handler_key_t) + handler_name_bytes};
-    std::memcpy(response.data(), &key, sizeof(handler_key_t));
-    std::memcpy(response.data() + sizeof(handler_key_t), handler_name.data(), handler_name_bytes);
+    server_message_t response{server_message_type_e::sent_handler_name, static_cast<uint32_t>(sizeof(handler_key_t) + handler_name_bytes)};
+    std::memcpy(response.message_data(), &key, sizeof(handler_key_t));
+    std::memcpy(response.message_data() + sizeof(handler_key_t), handler_name.data(), handler_name_bytes);
 
     (void)send(sender.socket, response.message_buffer.data(), response.message_buffer.size(), MSG_NOSIGNAL);
 }
 
 void on_set_handler_request(const std::vector<uint8_t>& message, client_t sender)
 {
-    if(message.size() <= 9)
+    if(message.size() <= 16)
     {
         on_invalid_message(message, sender);
         return;
@@ -316,8 +293,8 @@ void on_set_handler_request(const std::vector<uint8_t>& message, client_t sender
         return;
     }
 
-    auto key = *reinterpret_cast<const handler_key_t*>(&message[1]);
-    std::u16string handler_name{reinterpret_cast<const char16_t*>(&message[9]), ((message.size() - 9) / 2) - 1};
+    auto key = *reinterpret_cast<const handler_key_t*>(&message[8]);
+    std::u16string handler_name{reinterpret_cast<const char16_t*>(&message[16]), ((message.size() - 16) / 2) - 1};
 
     LOG("{}: set handler {} to {}", address2string(sender.address), key.to_string(), cvt_str16_to_str8(handler_name));
 
@@ -327,9 +304,9 @@ void on_set_handler_request(const std::vector<uint8_t>& message, client_t sender
 
     const uint64_t handler_name_bytes = ((handler_name.size() + 1) * 2);
 
-    server_message_t broadcast_message{server_message_type_e::sent_handler_name, sizeof(handler_key_t) + handler_name_bytes};
-    std::memcpy(broadcast_message.data(), &key, sizeof(handler_key_t));
-    std::memcpy(broadcast_message.data() + sizeof(handler_key_t), handler_name.data(), handler_name_bytes);
+    server_message_t broadcast_message{server_message_type_e::sent_handler_name, static_cast<uint32_t>(sizeof(handler_key_t) + handler_name_bytes)};
+    std::memcpy(broadcast_message.message_data(), &key, sizeof(handler_key_t));
+    std::memcpy(broadcast_message.message_data() + sizeof(handler_key_t), handler_name.data(), handler_name_bytes);
 
     pthread_rwlock_rdlock(&clients_lock);
     for(const client_t& client : clients)
@@ -344,6 +321,32 @@ void on_set_handler_request(const std::vector<uint8_t>& message, client_t sender
 
 void* client_listener(void*)
 {
+    auto on_recv_fail = [](ssize_t result, client_t client)
+    {
+        if(result == 0)
+        {
+            LOG("client disconnected: {}", address2string(client.address));
+        }
+        else if(result == -1)
+        {
+            LOG("client: {}. error on recv: {}", address2string(client.address), strerror(errno));
+        }
+
+        mutate_client(pthread_self(), [](client_t* client) //remove client, it has disconnected or errored
+        {
+            if(close(client->socket) == -1)
+            {
+                perror("close");
+            }
+
+            uint64_t index = std::distance(clients.data(), client);
+            clients[index] = clients.back();
+            clients.pop_back();
+        });
+
+        pthread_exit(nullptr);
+    };
+
     while(true)
     {
         client_t client;
@@ -352,51 +355,34 @@ void* client_listener(void*)
             pthread_exit(nullptr);
         }
 
-        std::vector<uint8_t> message_buffer{};
-        ssize_t nread = read_transmission_block(client.socket, message_buffer);
-
-        if(nread <= 0)
+        uint32_t message_size;
+        ssize_t result = read_client_message(client.socket, &message_size, nullptr);
+        if(result <= 0)
         {
-            if(nread == 0)
-            {
-                LOG("client disconnected: {}", address2string(client.address));
-            }
-            else if(nread == -1)
-            {
-                LOG("client: {}. error on recv: {}", address2string(client.address), strerror(errno));
-            }
-
-            mutate_client(pthread_self(), [](client_t* client) //remove client, it has disconnected or errored
-            {
-                if(close(client->socket) == -1)
-                {
-                    perror("close");
-                }
-
-                uint64_t index = std::distance(clients.data(), client);
-                clients[index] = clients.back();
-                clients.pop_back();
-            });
-
-            pthread_exit(nullptr);
+            on_recv_fail(result, client);
         }
-        else
+
+        std::vector<uint8_t> message_buffer(message_size);
+        result = read_client_message(client.socket, &message_size, message_buffer.data());
+        if(result <= 0)
         {
-            switch(reinterpret_cast<client_message_type_e&>(message_buffer[0]))
-            {
-                case client_message_type_e::login:
-                    on_login_request(message_buffer, client);
-                    break;
-                case client_message_type_e::get_handler:
-                    on_get_handler_request(message_buffer, client);
-                    break;
-                case client_message_type_e::set_handler:
-                    on_set_handler_request(message_buffer, client);
-                    break;
-                default:
-                    on_invalid_message(message_buffer, client);
-                    break;
-            }
+            on_recv_fail(result, client);
+        }
+
+        switch(reinterpret_cast<client_message_type_e&>(message_buffer[0]))
+        {
+            case client_message_type_e::login:
+                on_login_request(message_buffer, client);
+                break;
+            case client_message_type_e::get_handler:
+                on_get_handler_request(message_buffer, client);
+                break;
+            case client_message_type_e::set_handler:
+                on_set_handler_request(message_buffer, client);
+                break;
+            default:
+                on_invalid_message(message_buffer, client);
+                break;
         }
     }
 }

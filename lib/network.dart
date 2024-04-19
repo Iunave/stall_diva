@@ -15,20 +15,18 @@ enum ServerMessageType {
   sentHandlerName,
 }
 
-typedef ServerStream = Stream<(int, Uint8List)>;
-
 class ClientMessage {
   late Uint8List messageBuffer;
 
   ClientMessage(ClientMessageType messageType, int dataSize){
-    messageBuffer = Uint8List(dataSize + 2);
+    messageBuffer = Uint8List(8 + dataSize);
 
     var bufferView = ByteData.view(messageBuffer.buffer);
-    bufferView.setUint8(0, messageType.index);
-    bufferView.setUint8(messageBuffer.length - 1, endOfTransmissionBlock);
+    bufferView.setUint32(0, messageType.index, Endian.little);
+    bufferView.setUint32(4, dataSize, Endian.little);
   }
 
-  ByteData get viewData => ByteData.sublistView(messageBuffer, 1, messageBuffer.length - 1);
+  ByteData get viewData => ByteData.sublistView(messageBuffer, 8, messageBuffer.length);
 }
 
 class ServerCommunicator extends InheritedWidget {
@@ -40,30 +38,33 @@ class ServerCommunicator extends InheritedWidget {
 
   static ServerCommunicator of(BuildContext context) => context.getInheritedWidgetOfExactType<ServerCommunicator>()!;
 
-  ServerStream get messageStream => communicatorService.stream;
+  Stream<Uint8List> get messageStream => communicatorService.stream;
 }
 
 class PersistentServerCommunicator {
   late Future<Socket> server;
-  late ServerStream stream;
+  late Stream<Uint8List> stream;
 
   PersistentServerCommunicator(String host) {
     server = Socket.connect(host, 4040);
-    stream = startStream()
-        .map((event) => (event.first, event.sublist(1)))
-        .asBroadcastStream();
+    stream = startStream().asBroadcastStream();
   }
 
   Stream<Uint8List> startStream() async* {
     final socket = await server;
     var messageBuffer = BytesBuilder();
-    await for (final event in socket) {
-      for (final byte in event) {
-        if (byte == endOfTransmissionBlock) {
-          yield messageBuffer.takeBytes();
-        }
-        else {
-          messageBuffer.addByte(byte);
+
+    await for(final Uint8List event in socket) {
+      for(final int byte in event) {
+        messageBuffer.addByte(byte);
+
+        if(messageBuffer.length >= 8) {
+          final messageView = ByteData.view(messageBuffer.toBytes().buffer);
+          int messageDataSize = messageView.getUint32(4, Endian.little);
+
+          if(messageDataSize == messageBuffer.length - 8) {
+            yield messageBuffer.takeBytes();
+          }
         }
       }
     }
