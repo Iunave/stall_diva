@@ -16,8 +16,6 @@
 
 #define LOG(message, ...) fmt::print("{}: " message "\n", timestamp_formatted() __VA_OPT__(,) __VA_ARGS__)
 
-constexpr uint8_t END_OF_TRANSMISSION_BLOCK = 23;
-
 struct client_t
 {
     pthread_t listener = 0;
@@ -176,10 +174,11 @@ ssize_t read_client_message(int socket, uint32_t* buffer_size, void* buffer)
         struct{
             uint32_t type;
             uint32_t size;
-        } message_header{};
+        } message_header;
 
         ssize_t nread = recv(socket, &message_header, sizeof(message_header), MSG_WAITALL | MSG_PEEK);
-        if(nread <= 0){
+        if(nread <= 0)
+        {
             return nread;
         }
 

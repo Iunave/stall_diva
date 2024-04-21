@@ -42,15 +42,13 @@ class _EditableDayHandlerState extends State<EditableDayHandler> with SendNetwor
 
   void listenForServerHandlerName() async {
     final serverCommunicator = ServerCommunicator.of(context);
-    await for(final Uint8List message in serverCommunicator.messageStream){
+    await for(final ServerMessage message in serverCommunicator.messageStream){
       if(!mounted) break;
 
-      final messageView = ByteData.view(message.buffer);
-
-      if (messageView.getUint32(0, Endian.little) == ServerMessageType.sentHandlerName.index && messageView.getUint64(8, Endian.little) == widget.dayKey) {
+      if (message.type == ServerMessageType.sentHandlerName.index && message.viewData.getUint64(0, Endian.little) == widget.dayKey) {
         var stringBuilder = StringBuffer();
-        for(int index = 16; index < message.lengthInBytes - 2; index += 2){ //dont read the null char
-          stringBuilder.writeCharCode(messageView.getUint16(index, Endian.little));
+        for(int index = message.headerSize + 8; index < message.messageSize - 2; index += 2){ //dont read the null char
+          stringBuilder.writeCharCode(message.viewMessage.getUint16(index, Endian.little));
         }
 
         final String newHandler = stringBuilder.toString();
