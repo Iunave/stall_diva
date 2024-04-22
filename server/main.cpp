@@ -24,14 +24,18 @@ struct client_t
     bool logged_in = false;
 };
 
-struct handler_key_t
+enum handler_id_t : uint16_t
 {
-    uint64_t day : 62;
-    enum{
-        pasture = 0b00,
-        stable_in = 0b01,
-        stable_out = 0b10
-    } id : 2;
+    pasture = 0b00,
+    stable_in = 0b01,
+    stable_out = 0b10
+};
+
+struct __attribute__((packed)) handler_key_t
+{
+    uint16_t id;
+    uint16_t day;
+    uint32_t year;
 
     constexpr friend auto operator<=>(const handler_key_t& lhs, const handler_key_t& rhs){
         return std::bit_cast<uint64_t>(lhs) <=> std::bit_cast<uint64_t>(rhs);
@@ -39,7 +43,7 @@ struct handler_key_t
 
     std::string to_string() const
     {
-        return fmt::format("{}.{}", day, id);
+        return fmt::format("id: {}, day: {}, year: {}", id, day, year);
     }
 };
 
