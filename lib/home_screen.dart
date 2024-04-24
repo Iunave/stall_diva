@@ -341,12 +341,12 @@ class _HomeScreenState extends State<HomeScreen> {
           switch(subScreenSelected){
             0 => StableTable(
               year: viewingYear,
-              startDay: viewingWeek * 7,
+              startDay: ((viewingWeek - 1) * 7) + 1,
               days: daysToDisplay(),
             ),
             1 => PastureTable(
               year: viewingYear,
-              startDay: viewingWeek * 7,
+              startDay: ((viewingWeek - 1) * 7) + 1,
               days: daysToDisplay(),
             ),
             _ => throw UnimplementedError(),

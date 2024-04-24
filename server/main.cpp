@@ -13,6 +13,7 @@
 #include <fmt/format.h>
 #include <map>
 #include <functional>
+#include <span>
 
 #define LOG(message, ...) fmt::print("{}: " message "\n", timestamp_formatted() __VA_OPT__(,) __VA_ARGS__)
 
@@ -31,9 +32,20 @@ enum handler_id_t : uint16_t
     stable_out = 0b10
 };
 
+std::string handler_id2string(handler_id_t handler_id)
+{
+    switch(handler_id)
+    {
+        case handler_id_t::pasture: return "pasture";
+        case handler_id_t::stable_in: return "stable_in";
+        case handler_id_t::stable_out: return "stable_out";
+        default: return "invalid value";
+    }
+}
+
 struct __attribute__((packed)) handler_key_t
 {
-    uint16_t id;
+    handler_id_t id;
     uint16_t day;
     uint32_t year;
 
@@ -41,9 +53,8 @@ struct __attribute__((packed)) handler_key_t
         return std::bit_cast<uint64_t>(lhs) <=> std::bit_cast<uint64_t>(rhs);
     }
 
-    std::string to_string() const
-    {
-        return fmt::format("id: {}, day: {}, year: {}", id, day, year);
+    std::string to_string() const {
+        return fmt::format("id: {}, day: {}, year: {}", handler_id2string(id), day, year);
     }
 };
 
@@ -232,12 +243,12 @@ bool mutate_client(pthread_t listener, C mutator)
     return false;
 }
 
-void on_invalid_message(const std::vector<uint8_t>& message, client_t sender)
+void on_invalid_message(std::span<uint8_t> message, client_t sender)
 {
     LOG("recieved invalid message {}. from: {}", reinterpret_cast<const uint32_t&>(message[0]), address2string(sender.address));
 }
 
-void on_login_request(const std::vector<uint8_t>& message, client_t sender)
+void on_login_request(std::span<uint8_t> message, client_t sender)
 {
     constexpr char password[] = "washington";
     auto entered_password = reinterpret_cast<const char*>(&message[8]);
@@ -257,7 +268,7 @@ void on_login_request(const std::vector<uint8_t>& message, client_t sender)
     }
 }
 
-void on_get_handler_request(const std::vector<uint8_t>& message, client_t sender)
+void on_get_handler_request(std::span<uint8_t> message, client_t sender)
 {
     if(message.size() != 16)
     {
@@ -282,7 +293,7 @@ void on_get_handler_request(const std::vector<uint8_t>& message, client_t sender
     (void)send(sender.socket, response.message_buffer.data(), response.message_buffer.size(), MSG_NOSIGNAL);
 }
 
-void on_set_handler_request(const std::vector<uint8_t>& message, client_t sender)
+void on_set_handler_request(std::span<uint8_t> message, client_t sender)
 {
     if(message.size() <= 16)
     {
