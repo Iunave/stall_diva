@@ -1,11 +1,23 @@
 import 'package:flutter/material.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:web_socket_channel/status.dart' as ws_status;
 
 import 'network.dart';
 import 'login_screen.dart';
 import 'home_screen.dart';
 
-void main() {
-  var communicatorService = PersistentServerCommunicator('stall-diva.se');
+void main() async {
+  const String host = 'ws://stall-diva.se';
+  final Uri serverUrl = Uri.parse(host);
+
+  var wsServer = WebSocketChannel.connect(serverUrl);
+  await wsServer.ready;
+
+  wsServer.stream.listen((message) {
+    message.
+  });
+
+  var communicatorService = PersistentServerCommunicator(host);
 
   runApp(
     MaterialApp(

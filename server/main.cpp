@@ -12,10 +12,30 @@
 #include <array>
 #include <fmt/format.h>
 #include <map>
-#include <functional>
+#include <unordered_map>
 #include <span>
 
 #define LOG(message, ...) fmt::print("{}: " message "\n", timestamp_formatted() __VA_OPT__(,) __VA_ARGS__)
+
+struct http_message_t
+{
+    std::string data{};
+
+    http_message_t& line(std::string_view in)
+    {
+        data.append(fmt::format("{}\r\n", in));
+        return *this;
+    }
+};
+
+struct http_request_t
+{
+    std::string buffer;
+    std::string_view request_type;
+    std::string_view request_path;
+    std::string_view http_version;
+    std::map<std::string, std::string> headers;
+};
 
 struct client_t
 {
@@ -73,7 +93,7 @@ int server_socket = 0;
 std::vector<client_t> clients{};
 pthread_rwlock_t clients_lock{};
 
-std::map<handler_key_t, std::u16string> handlers{};
+std::unordered_map<handler_key_t, std::u16string> handlers{};
 pthread_rwlock_t handlers_lock{};
 
 enum class client_message_type_e : uint32_t
@@ -180,6 +200,76 @@ void disconnect_clients()
 
         sched_yield();
     }
+}
+
+ssize_t read_http_line(int socket, std::string* line)
+{
+    while(true)
+    {
+        char byte;
+        ssize_t result = recv(socket, &byte, 1, MSG_WAITALL);
+        if(result <= 0)
+        {
+            return result;
+        }
+
+        line->append(1, byte);
+        if(line->ends_with("\r\n"))
+        {
+            return 1;
+        }
+    }
+}
+
+ssize_t read_http_message(int socket, std::string* message)
+{
+    while(true)
+    {
+        if(ssize_t result = read_http_line(socket, message); result <= 0)
+        {
+            return result;
+        }
+
+        if(message->ends_with("\r\n\r\n"))
+        {
+            return 1;
+        }
+    }
+}
+
+ssize_t read_http_request(int socket, http_request_t* request)
+{
+    ssize_t result = read_http_message(socket, &request->buffer);
+    if(result <= 0)
+    {
+        return result;
+    }
+
+    const std::string_view buffer = request->buffer;
+
+    size_t space0 = buffer.find(' ', 0);
+    if(space0 == std::string_view::npos)
+    {
+        return 0;
+    }
+
+    size_t space1 = buffer.find(' ', space0 + 1);
+    if(space1 == std::string_view::npos)
+    {
+        return 0;
+    }
+
+    size_t newline_pos = buffer.find('\r', space1 + 1);
+    if(newline_pos == std::string_view::npos)
+    {
+        return 0;
+    }
+
+    request->request_type = buffer.substr(0, space0);
+    request->request_path = buffer.substr(space0 + 1, space1 - space0 - 1);
+    request->http_version = buffer.substr(space1 + 1, newline_pos - space1 - 1);
+
+    return 1;
 }
 
 ssize_t read_client_message(int socket, uint32_t* buffer_size, void* buffer)
@@ -369,35 +459,40 @@ void* client_listener(void*)
             pthread_exit(nullptr);
         }
 
-        uint32_t message_size;
-        ssize_t result = read_client_message(client.socket, &message_size, nullptr);
+        http_request_t request{};
+        ssize_t result = read_http_request(client.socket, &request);
         if(result <= 0)
         {
             on_recv_fail(result, client);
         }
 
-        std::vector<uint8_t> message_buffer(message_size);
-        result = read_client_message(client.socket, &message_size, message_buffer.data());
-        if(result <= 0)
-        {
-            on_recv_fail(result, client);
-        }
+        LOG("{} {} {}", request.request_type, request.request_path, request.http_version);
+        fflush(stdout);
+/*
+        std::string response = "HTTP/1.1 200 OK\r\n"
+                               "Server: stall-diva\r\n"
+                               "Content-Type: text/html\r\n";
 
-        switch(reinterpret_cast<client_message_type_e&>(message_buffer[0]))
-        {
-            case client_message_type_e::login:
-                on_login_request(message_buffer, client);
-                break;
-            case client_message_type_e::get_handler:
-                on_get_handler_request(message_buffer, client);
-                break;
-            case client_message_type_e::set_handler:
-                on_set_handler_request(message_buffer, client);
-                break;
-            default:
-                on_invalid_message(message_buffer, client);
-                break;
-        }
+        std::string response_body = "<!DOCTYPE html>\r\n"
+                                    "<html lang=\"en-US\">\r\n"
+                                    "<head>\r\n"
+                                    "<meta charset=\"utf-8\"/>\r\n"
+                                    "<meta name=\"viewport\" content=\"width=device-width\"/>\r\n"
+                                    "<title>Stall Diva Chemaplanerare</title>\r\n"
+                                    "</head>\r\n"
+                                    "<body>\r\n"
+                                    "<img src=\"https://raw.githubusercontent.com/mdn/beginner-html-site/gh-pages/images/firefox-icon.png\"/>\r\n"
+                                    "</body>\r\n"
+                                    "</html>";
+
+        response.append(fmt::format("Content-Length: {}\r\n\r\n", response_body.size()));
+        response.append(response_body);
+
+        fmt::print("{}", response);
+        fflush(stdout);
+
+        (void)send(client.socket, response.data(), response.size(), MSG_NOSIGNAL);
+        */
     }
 }
 
