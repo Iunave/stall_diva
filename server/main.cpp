@@ -12,7 +12,7 @@
 #include <array>
 #include <fmt/format.h>
 #include <map>
-#include <functional>
+#include <unordered_map>
 #include <span>
 
 #define LOG(message, ...) fmt::print("{}: " message "\n", timestamp_formatted() __VA_OPT__(,) __VA_ARGS__)
@@ -46,22 +46,24 @@ std::string handler_id2string(handler_id_t handler_id)
 struct __attribute__((packed)) handler_key_t
 {
     handler_id_t id;
-    uint16_t day;
+    uint16_t day_of_year;
     uint32_t year;
 
-    constexpr friend auto operator<=>(const handler_key_t& lhs, const handler_key_t& rhs){
-        return std::bit_cast<uint64_t>(lhs) <=> std::bit_cast<uint64_t>(rhs);
+    constexpr friend bool operator==(const handler_key_t& lhs, const handler_key_t& rhs)
+    {
+        return std::bit_cast<uint64_t>(lhs) == std::bit_cast<uint64_t>(rhs);
     }
 
-    std::string to_string() const {
-        return fmt::format("id: {}, day: {}, year: {}", handler_id2string(id), day, year);
+    std::string to_string() const
+    {
+        return fmt::format("id: {}, day: {}, year: {}", handler_id2string(id), day_of_year, year);
     }
 };
 
 template<>
 struct std::hash<handler_key_t>
 {
-    constexpr size_t operator()(const handler_key_t& in)
+    constexpr size_t operator()(const handler_key_t& in) const
     {
         return std::bit_cast<size_t>(in);
     }
@@ -73,7 +75,7 @@ int server_socket = 0;
 std::vector<client_t> clients{};
 pthread_rwlock_t clients_lock{};
 
-std::map<handler_key_t, std::u16string> handlers{};
+std::unordered_map<handler_key_t, std::u16string> handlers{};
 pthread_rwlock_t handlers_lock{};
 
 enum class client_message_type_e : uint32_t

@@ -1,40 +1,22 @@
-import 'network.dart';
 import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:jiffy/jiffy.dart';
 
-const weekdays = [
-  'Måndag',
-  'Tisdag',
-  'Onsdag',
-  'Torsdag',
-  'Fredag',
-  'Lördag',
-  'Söndag',
-];
+import 'network.dart';
 
-bool isLeapYear(int year) {
-  if(year % 100 == 0) {
-    return year % 400 == 0;
-  }
-  else {
-    return year % 4 == 0;
-  }
-}
-
-enum DayHandlerID{
+enum DayHandlerID {
   pasture,
   stableIn,
   stableOut,
 }
 
 class EditableDayHandler extends StatefulWidget {
-  final int year;
-  final int day;
+  final Jiffy date;
   final DayHandlerID handlerId;
-  const EditableDayHandler({super.key, required this.year, required this.day, required this.handlerId});
+  const EditableDayHandler({super.key, required this.date, required this.handlerId});
 
-  int get handlerKey => (handlerId.index << 0) | (day << 16) | (year << 32);
+  int get handlerKey => handlerId.index | (date.dayOfYear << 16) | (date.year << 32);
 
   @override
   State<StatefulWidget> createState() => _EditableDayHandlerState();
@@ -111,6 +93,7 @@ class _EditableDayHandlerState extends State<EditableDayHandler> with SendNetwor
       child: Center(
         child: TextField(
           decoration: null,
+          maxLines: null,
           textAlign: TextAlign.center,
           controller: textController,
           onChanged: onUserChangedHandlerName,
@@ -120,11 +103,28 @@ class _EditableDayHandlerState extends State<EditableDayHandler> with SendNetwor
   }
 }
 
-class PastureTable extends StatelessWidget {
-  final int year;
-  final int startDay;
-  final int days;
-  const PastureTable({super.key, required this.year, required this.startDay, required this.days});
+abstract class TableBase extends StatelessWidget {
+  final Jiffy startDate;
+  const TableBase({super.key, required this.startDate});
+  
+  String getDayName(int offset) {
+    const weekdays = [
+      'Måndag',
+      'Tisdag',
+      'Onsdag',
+      'Torsdag',
+      'Fredag',
+      'Lördag',
+      'Söndag',
+    ];
+
+    final Jiffy offsetDate = startDate.addDuration(Duration(days: offset));
+    return weekdays[offsetDate.dayOfWeek - 1];
+  }
+}
+
+class PastureTable extends TableBase {
+  const PastureTable({super.key, required super.startDate});
 
   @override
   Widget build(BuildContext context) {
@@ -135,17 +135,16 @@ class PastureTable extends StatelessWidget {
         defaultVerticalAlignment: TableCellVerticalAlignment.middle,
         children: [
           TableRow(
-            children: List<Widget>.generate(days, (index) {
+            children: List<Widget>.generate(7, (index) {
               return Center(
-                child: Text(weekdays[index % 7]),
+                child: Text(getDayName(index)),
               );
             })
           ),
           TableRow(
-            children: List<Widget>.generate(days, (index){
+            children: List<Widget>.generate(7, (index){
               return EditableDayHandler(
-                  year: year,
-                  day: startDay + index,
+                  date: startDate.addDuration(Duration(days: index)),
                   handlerId: DayHandlerID.pasture
               );
             })
@@ -156,14 +155,11 @@ class PastureTable extends StatelessWidget {
   }
 }
 
-class StableTable extends StatelessWidget {
-  final int year;
-  final int startDay;
-  final int days;
-  const StableTable({super.key, required this.year, required this.startDay, required this.days});
+class StableTable extends TableBase {
+  const StableTable({super.key, required super.startDate});
 
   List<Widget> createTableRowWidgets(String responsibility, DayHandlerID id){
-    return List<Widget>.generate(days + 1, (index) {
+    return List<Widget>.generate(8, (index) {
       if(index == 0) {
         return Center(
             child: Text(
@@ -176,8 +172,7 @@ class StableTable extends StatelessWidget {
       }
       else {
         return EditableDayHandler(
-          year: year,
-          day: startDay + index - 1,
+          date: startDate.addDuration(Duration(days: index - 1)),
           handlerId: id,
         );
       }
@@ -193,23 +188,23 @@ class StableTable extends StatelessWidget {
         defaultVerticalAlignment: TableCellVerticalAlignment.middle,
         children: [
           TableRow(
-              children: List<Widget>.generate(days + 1, (index) {
-                if(index == 0) {
-                  return const Center(
-                    child: Text(
-                      'veckodag',
-                      style: TextStyle(
-                        fontStyle: FontStyle.italic
-                      ),
-                    )
-                  );
-                }
-                else {
-                  return Center(
-                      child: Text(weekdays[(index - 1) % 7])
-                  );
-                }
-              })
+              children: List<Widget>.generate(8, (index) {
+              if(index == 0) {
+                return const Center(
+                  child: Text(
+                    'veckodag',
+                    style: TextStyle(
+                      fontStyle: FontStyle.italic
+                    ),
+                  )
+                );
+              }
+              else {
+                return Center(
+                    child: Text(getDayName(index - 1))
+                );
+              }
+            })
           ),
           TableRow(
               children: createTableRowWidgets('INTAG', DayHandlerID.stableIn)
@@ -232,13 +227,11 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int subScreenSelected = 0;
-  late int viewingWeek;
-  late int viewingYear;
+  late Jiffy viewingDate;
 
   _HomeScreenState() {
-    Jiffy dateNow = Jiffy.now().toLocal();
-    viewingWeek = dateNow.weekOfYear;
-    viewingYear = dateNow.year;
+    viewingDate = Jiffy.now().toLocal();
+    viewingDate = viewingDate.subtractDuration(Duration(days: viewingDate.dayOfWeek - 1)); //floor to monday
   }
 
   void changeSubScreenSelected(Set<int> newSelection) {
@@ -251,40 +244,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void nextWeekNumber() {
     setState(() {
-      if(viewingWeek == 52) {
-        viewingWeek = 1;
-        viewingYear += 1;
-      }
-      else {
-        viewingWeek += 1;
-      }
+      viewingDate = viewingDate.addDuration(const Duration(days: 7));
     });
   }
 
   void prevWeekNumber() {
     setState(() {
-      if(viewingWeek == 1) {
-        viewingWeek = 52;
-        viewingYear -= 1;
-      }
-      else {
-        viewingWeek -= 1;
-      }
+      viewingDate = viewingDate.subtractDuration(const Duration(days: 7));
     });
-  }
-
-  int daysToDisplay() {
-    if(viewingWeek == 52) {
-      if(isLeapYear(viewingYear)) {
-        return 9;
-      }
-      else {
-        return 8;
-      }
-    }
-    else {
-      return 7;
-    }
   }
 
   @override
@@ -326,7 +293,7 @@ class _HomeScreenState extends State<HomeScreen> {
               Padding(
                 padding: const EdgeInsets.all(36.0),
                 child: Text(
-                  'PASSLISTA $viewingYear V.$viewingWeek',
+                  'PASSLISTA ${viewingDate.year} V.${viewingDate.weekOfYear}',
                   style: const TextStyle(
                       fontSize: 28.0
                   ),
@@ -339,16 +306,8 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
           switch(subScreenSelected){
-            0 => StableTable(
-              year: viewingYear,
-              startDay: ((viewingWeek - 1) * 7) + 1,
-              days: daysToDisplay(),
-            ),
-            1 => PastureTable(
-              year: viewingYear,
-              startDay: ((viewingWeek - 1) * 7) + 1,
-              days: daysToDisplay(),
-            ),
+            0 => StableTable(startDate: viewingDate,),
+            1 => PastureTable(startDate: viewingDate,),
             _ => throw UnimplementedError(),
           }
         ],

@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
 
 import 'network.dart';
-import 'login_screen.dart';
-import 'home_screen.dart';
+import 'login_screen.dart' show LoginScreen;
+import 'home_screen.dart' show HomeScreen;
 
 void main() {
   var communicatorService = PersistentServerCommunicator('stall-diva.se');
 
   runApp(
     MaterialApp(
-      title: 'stall diva chemaplanerare',
+      title: 'stall diva schemaplanerare',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: Colors.blue,
