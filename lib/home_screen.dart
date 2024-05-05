@@ -39,7 +39,7 @@ class _EditableDayHandlerState extends State<EditableDayHandler> with SendNetwor
 
       if (message.type == ServerMessageType.sentHandlerName.index && message.viewData.getUint64(0, Endian.little) == widget.handlerKey) {
         var stringBuilder = StringBuffer();
-        for(int index = message.headerSize + 8; index < message.messageSize - 2; index += 2){ //dont read the null char
+        for(int index = message.headerSize + 8; index < message.messageSize - 2; index += 2) { //dont read the null char
           stringBuilder.writeCharCode(message.viewMessage.getUint16(index, Endian.little));
         }
 
@@ -106,7 +106,7 @@ class _EditableDayHandlerState extends State<EditableDayHandler> with SendNetwor
 abstract class TableBase extends StatelessWidget {
   final Jiffy startDate;
   const TableBase({super.key, required this.startDate});
-  
+
   String getDayName(int offset) {
     const weekdays = [
       'Måndag',
@@ -118,7 +118,7 @@ abstract class TableBase extends StatelessWidget {
       'Söndag',
     ];
 
-    final Jiffy offsetDate = startDate.addDuration(Duration(days: offset));
+    final Jiffy offsetDate = startDate.add(days: offset);
     return weekdays[offsetDate.dayOfWeek - 1];
   }
 }
@@ -144,7 +144,7 @@ class PastureTable extends TableBase {
           TableRow(
             children: List<Widget>.generate(7, (index){
               return EditableDayHandler(
-                  date: startDate.addDuration(Duration(days: index)),
+                  date: startDate.add(days: index),
                   handlerId: DayHandlerID.pasture
               );
             })
@@ -172,7 +172,7 @@ class StableTable extends TableBase {
       }
       else {
         return EditableDayHandler(
-          date: startDate.addDuration(Duration(days: index - 1)),
+          date: startDate.add(days: index - 1),
           handlerId: id,
         );
       }
@@ -231,7 +231,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   _HomeScreenState() {
     viewingDate = Jiffy.now().toLocal();
-    viewingDate = viewingDate.subtractDuration(Duration(days: viewingDate.dayOfWeek - 1)); //floor to monday
+    viewingDate = viewingDate.subtract(days: viewingDate.dayOfWeek - 1); //floor to monday
   }
 
   void changeSubScreenSelected(Set<int> newSelection) {
@@ -244,13 +244,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void nextWeekNumber() {
     setState(() {
-      viewingDate = viewingDate.addDuration(const Duration(days: 7));
+      viewingDate = viewingDate.add(days: 7);
     });
   }
 
   void prevWeekNumber() {
     setState(() {
-      viewingDate = viewingDate.subtractDuration(const Duration(days: 7));
+      viewingDate = viewingDate.subtract(days: 7);
     });
   }
 

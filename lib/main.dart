@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import 'package:intl/date_symbol_data_local.dart';
 
 import 'network.dart';
 import 'login_screen.dart' show LoginScreen;
 import 'home_screen.dart' show HomeScreen;
 
 void main() {
+  Intl.systemLocale = 'sv';
+  initializeDateFormatting('sv');
+
   var communicatorService = PersistentServerCommunicator('stall-diva.se');
 
   runApp(
