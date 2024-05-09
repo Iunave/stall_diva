@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:jiffy/jiffy.dart';
+import 'package:week_number/iso.dart';
 
 import 'network.dart';
 
@@ -12,11 +12,11 @@ enum DayHandlerID {
 }
 
 class EditableDayHandler extends StatefulWidget {
-  final Jiffy date;
+  final DateTime date;
   final DayHandlerID handlerId;
   const EditableDayHandler({super.key, required this.date, required this.handlerId});
 
-  int get handlerKey => handlerId.index | (date.dayOfYear << 16) | (date.year << 32);
+  int get handlerKey => handlerId.index | (date.ordinalDate << 16) | (date.year << 32);
 
   @override
   State<StatefulWidget> createState() => _EditableDayHandlerState();
@@ -104,7 +104,7 @@ class _EditableDayHandlerState extends State<EditableDayHandler> with SendNetwor
 }
 
 abstract class TableBase extends StatelessWidget {
-  final Jiffy startDate;
+  final DateTime startDate;
   const TableBase({super.key, required this.startDate});
 
   String getDayName(int offset) {
@@ -118,8 +118,8 @@ abstract class TableBase extends StatelessWidget {
       'Söndag',
     ];
 
-    final Jiffy offsetDate = startDate.add(days: offset);
-    return weekdays[offsetDate.dayOfWeek - 1];
+    final DateTime offsetDate = startDate.add(Duration(days: offset));
+    return weekdays[offsetDate.weekday - 1];
   }
 }
 
@@ -144,7 +144,7 @@ class PastureTable extends TableBase {
           TableRow(
             children: List<Widget>.generate(7, (index){
               return EditableDayHandler(
-                  date: startDate.add(days: index),
+                  date: startDate.add(Duration(days: index)),
                   handlerId: DayHandlerID.pasture
               );
             })
@@ -172,7 +172,7 @@ class StableTable extends TableBase {
       }
       else {
         return EditableDayHandler(
-          date: startDate.add(days: index - 1),
+          date: startDate.add(Duration(days: index - 1)),
           handlerId: id,
         );
       }
@@ -227,11 +227,22 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int subScreenSelected = 0;
-  late Jiffy viewingDate;
+  late DateTime viewingDate;
 
   _HomeScreenState() {
-    viewingDate = Jiffy.now().toLocal();
-    viewingDate = viewingDate.subtract(days: viewingDate.dayOfWeek - 1); //floor to monday
+    viewingDate = DateTime.now().toLocal();
+    viewingDate = viewingDate.subtract(Duration(days: viewingDate.weekday - 1)); //floor to monday
+  }
+
+  (int, int) getDisplayYearAndWeek() {
+    int year = viewingDate.year;
+    int week = viewingDate.weekNumber;
+
+    if(week == 1 && viewingDate.ordinalDate > 7) {
+      ++year;
+    }
+
+    return (year, week);
   }
 
   void changeSubScreenSelected(Set<int> newSelection) {
@@ -244,18 +255,19 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void nextWeekNumber() {
     setState(() {
-      viewingDate = viewingDate.add(days: 7);
+      viewingDate = viewingDate.add(const Duration(days: 7));
     });
   }
 
   void prevWeekNumber() {
     setState(() {
-      viewingDate = viewingDate.subtract(days: 7);
+      viewingDate = viewingDate.subtract(const Duration(days: 7));
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    final (int year, int week) = getDisplayYearAndWeek();
     return Scaffold(
       appBar: AppBar(
         leading: Image.asset('images/flutter.png'),
@@ -293,7 +305,7 @@ class _HomeScreenState extends State<HomeScreen> {
               Padding(
                 padding: const EdgeInsets.all(36.0),
                 child: Text(
-                  'PASSLISTA ${viewingDate.year} V.${viewingDate.weekOfYear}',
+                  'PASSLISTA $year V.$week',
                   style: const TextStyle(
                       fontSize: 28.0
                   ),

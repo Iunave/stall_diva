@@ -1,0 +1,1 @@
+/usr/bin/c++ -std=c++23 -O3 -march=native -fno-rtti -fno-exceptions -rdynamic CMakeFiles/stall_server.dir/main.cpp.o -o stall_server  -lpthread -lfmt 

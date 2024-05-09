@@ -83,14 +83,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.19.0"
-  jiffy:
-    dependency: "direct main"
-    description:
-      name: jiffy
-      sha256: b09b6aacc0ebe7d178d2fcbabfd73e7d3340594043fe949bb7e0814093b00201
-      url: "https://pub.dev"
-    source: hosted
-    version: "6.3.0"
   leak_tracker:
     dependency: transitive
     description:
@@ -224,5 +216,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "13.0.0"
+  week_number:
+    dependency: "direct main"
+    description:
+      name: week_number
+      sha256: d2c4d95b665cdbb6d9938d85e1a899038a4bd0b0843a2528345ed33dcfade13e
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.1.0"
 sdks:
   dart: ">=3.2.0-0 <4.0.0"

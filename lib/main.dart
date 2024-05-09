@@ -8,9 +8,10 @@ import 'home_screen.dart' show HomeScreen;
 
 void main() {
   Intl.systemLocale = 'sv';
-  initializeDateFormatting('sv');
+  initializeDateFormatting(Intl.getCurrentLocale());
 
-  var communicatorService = PersistentServerCommunicator('stall-diva.se');
+  String host = const String.fromEnvironment("host");
+  var communicatorService = PersistentServerCommunicator(host);
 
   runApp(
     MaterialApp(
